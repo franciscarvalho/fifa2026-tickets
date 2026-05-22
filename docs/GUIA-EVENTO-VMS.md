@@ -153,14 +153,14 @@ O "mapa do estádio" — **Cenário 3 VMs** (o que você vai montar):
 | 🤝 Convocação | 1. Fork do repositório + baixar bacpac | 5 min |
 | 🏟️ Fase de Grupos | 2. Provisionar VNet + 3 VMs no Portal | 25 min |
 | 🗄️ Oitavas | 3. SQL Server na `vm-db` + restore bacpac | 20 min |
-| 🔧 Quartas | 4. IIS+iisnode+Node na `vm-back` + deploy backend | 20 min |
-| ⚙️ Semifinal | 5. IIS+ARR na `vm-front` + build+deploy frontend | 15 min |
+| 🔧 Quartas | 4. IIS+iisnode+Node na `vm-back` + deploy do `fifa2026-api.zip` | 15 min |
+| ⚙️ Semifinal | 5. IIS+ARR na `vm-front` + deploy do `fifa2026-web.zip` | 10 min |
 | 🏆 Final | 6. Smoke test ponta a ponta | 10 min |
 | 🎖️ Pós-jogo | 7. Troubleshooting + **desligar VMs** | livre |
 
-> 🧩 **Como o código chega até você:** baixe o ZIP da aplicação direto na VM (link na Fase 4). Sem CI/CD nesse cenário — _esse_ é o caminho PaaS, e parte da lição é sentir a falta dele.
+> 🧩 **Como o código chega até você:** você baixa **dois ZIPs já prontos** — `fifa2026-api.zip` na `vm-back` (Fase 4) e `fifa2026-web.zip` na `vm-front` (Fase 5). Ambos vêm **compilados**: o frontend já buildado e as dependências do backend (`node_modules`) já incluídas. **Você não compila nada** — só configura. Sem CI/CD nesse cenário — _esse_ é o caminho PaaS, e parte da lição é sentir a falta dele. _(Instrutor: os dois ZIPs são gerados via [`PACOTE-ALUNOS.md`](PACOTE-ALUNOS.md) e publicados no Blob Storage.)_
 
-> 🧠 **Total esperado:** ~1h45 de mão na massa + tempo de download/instalação. Reserve **2h30 cheias** na primeira execução.
+> 🧠 **Total esperado:** ~1h30 de mão na massa + tempo de download/instalação. Reserve **2h30 cheias** na primeira execução.
 
 ---
 
@@ -404,15 +404,15 @@ Ainda no navegador da `vm-back`:
 2. **iisnode** (versão **Full**): [github.com/Azure/iisnode/releases](https://github.com/Azure/iisnode/releases) → baixe `iisnode-full-v0.2.26-x64.msi` → instale
 3. **URL Rewrite Module**: [iis.net/downloads/microsoft/url-rewrite](https://www.iis.net/downloads/microsoft/url-rewrite) → instale
 
-#### 4.4 Baixar a aplicação
+#### 4.4 Baixar a aplicação (já compilada)
 
-Baixe o ZIP da aplicação direto na `vm-back`:
+Baixe o ZIP **pronto** do backend direto na `vm-back`:
 
 ```
-https://stoposgraduacaotftec.blob.core.windows.net/arquivos-pos/FIFA2026-APP.zip
+https://stotfteccopaazure.blob.core.windows.net/copa2026/fifa2026-api.zip
 ```
 
-Extraia para `C:\inetpub\wwwroot\` — vai aparecer a pasta `fifa2026-api/`.
+Extraia para `C:\inetpub\wwwroot\` — vai aparecer a pasta `fifa2026-api/` já com `src/`, `web.config`, `.env.example` **e a pasta `node_modules/` (dependências de produção já instaladas)**.
 
 #### 4.5 Configurar `.env` da API
 
@@ -439,16 +439,11 @@ Substitua `<IP_DB>` (anotado na Fase 2), `<IP_FRONT>` (Public IP da vm-front, ta
 
 > 💡 **Por que `HOST=0.0.0.0`?** Sem isso, Node escuta só em `localhost`, e a vm-front não consegue alcançar pelo IP privado. Com `0.0.0.0` aceita conexões de toda a VNet.
 
-#### 4.6 Instalar dependências do Node
+#### 4.6 Dependências do Node — já incluídas (nada a instalar)
 
-PowerShell **como Administrador** em `C:\inetpub\wwwroot\fifa2026-api`:
+O `fifa2026-api.zip` **já traz a pasta `node_modules/`** instalada (dependências de produção). **Você NÃO precisa rodar `npm install`** — pule direto para o próximo passo.
 
-```powershell
-cd C:\inetpub\wwwroot\fifa2026-api
-npm install --omit=dev
-```
-
-(~3-5 min)
+> 💡 **Por que já vem pronto?** O backend é JavaScript puro (sem etapa de compilação) e as dependências (`express`, `mssql`, `bcryptjs`…) não têm módulos nativos — então a `node_modules` empacotada funciona em qualquer Windows. Isso evita o download de centenas de pacotes dentro da VM. _(No cenário PaaS, é o `npm install` do pipeline de deploy que faz esse trabalho.)_
 
 #### 4.7 Permissões na pasta
 
@@ -486,26 +481,13 @@ Invoke-RestMethod -Uri "http://localhost:3001/api/matches" | Select-Object -Expa
 
 ### ⚙️ Fase 5 — Semifinal: configurar a `vm-front` (frontend + proxy reverso)
 
-#### 5.1 Build do frontend (no SEU computador local, não na VM)
+> 🧩 **Sem build.** O frontend já vem **compilado** dentro do `fifa2026-web.zip` (HTML/JS/CSS prontos). Você não precisa de Node nem do código-fonte aqui — só publica os arquivos e aponta o proxy para a `vm-back`.
 
-1. Clone o seu fork localmente (se ainda não tiver):
-   ```bash
-   git clone https://github.com/<seu-usuario>/<seu-fork>
-   cd <seu-fork>/FIFA2026-APP/Lovable/World\ Cup\ Tickets\ Hub
-   ```
-2. Instale dependências e faça o build apontando para o IP privado da vm-back:
-   ```bash
-   npm install
-   BACKEND_URL=http://<IP_BACK>:3001 npm run build
-   ```
-   _(No Windows local, use `set BACKEND_URL=...` antes do `npm run build`.)_
-3. A pasta `dist/` foi gerada com `web.config` já apontando para o backend correto. **Comprime essa pasta `dist/` em um ZIP** — você vai copiar para a `vm-front`.
-
-#### 5.2 Conectar via RDP direto
+#### 5.1 Conectar via RDP direto
 
 A `vm-front` tem IP público, então RDP direto: cliente RDP → `IP_FRONT` → `tftecadmin`.
 
-#### 5.3 Instalar IIS + URL Rewrite + ARR
+#### 5.2 Instalar IIS + URL Rewrite + ARR
 
 PowerShell **como Administrador** na `vm-front`:
 
@@ -520,7 +502,7 @@ No navegador da `vm-front`:
 - [URL Rewrite Module](https://www.iis.net/downloads/microsoft/url-rewrite) → instale
 - [Application Request Routing (ARR)](https://www.iis.net/downloads/microsoft/application-request-routing) → instale
 
-#### 5.4 Habilitar proxy no ARR
+#### 5.3 Habilitar proxy no ARR
 
 1. **IIS Manager** → clique no nome do servidor (raiz da árvore)
 2. Painel central → duplo clique em **Application Request Routing Cache**
@@ -529,13 +511,28 @@ No navegador da `vm-front`:
 
 > ⚠️ **Não pule este passo.** Sem `Enable proxy`, o `web.config` do frontend tenta fazer rewrite e o IIS retorna 502. Esse é o erro nº 1 do cenário VM.
 
-#### 5.5 Deploy do `dist/` na `vm-front`
+#### 5.4 Baixar o frontend e apontar para o backend
 
-1. Copie o ZIP do `dist/` do seu computador para a `vm-front` (copy-paste no RDP funciona; ou use OneDrive temporariamente)
-2. Extraia para `C:\inetpub\wwwroot\fifa2026-web\` — você deve ver `index.html` + `assets/` + `web.config` lá dentro
-3. Abra `C:\inetpub\wwwroot\fifa2026-web\web.config` no Bloco de Notas e **confirme** que tem uma regra com `<action type="Rewrite" url="http://<IP_BACK>:3001/api/{R:1}" />` (com o seu IP correto, embutido pelo build)
+1. Baixe o ZIP **pronto** do frontend direto na `vm-front`:
+   ```
+   https://stotfteccopaazure.blob.core.windows.net/copa2026/fifa2026-web.zip
+   ```
+2. Extraia para `C:\inetpub\wwwroot\` — vai aparecer a pasta `fifa2026-web/` com `index.html` + `assets/` + `web.config`.
+3. **A única edição do frontend:** o `web.config` vem com o placeholder `__BACKEND_URL__`. Troque-o pelo IP privado da `vm-back`. PowerShell na `vm-front`:
+   ```powershell
+   cd C:\inetpub\wwwroot\fifa2026-web
+   (Get-Content web.config) -replace '__BACKEND_URL__','http://<IP_BACK>:3001' | Set-Content web.config
+   ```
+   _(troque `<IP_BACK>` pelo IP privado real da vm-back, anotado na Fase 2 — ex.: `http://10.20.0.5:3001`)_
+4. **Confirme** a substituição:
+   ```powershell
+   Select-String -Path web.config -Pattern '__BACKEND_URL__'   # NÃO deve retornar nada
+   Select-String -Path web.config -Pattern 'Rewrite url'        # deve mostrar o seu IP
+   ```
 
-#### 5.6 Criar site no IIS (porta 80)
+> 💡 **Por que não precisa recompilar?** O endereço do backend **não** está embutido no JavaScript — o código chama sempre `/api` (relativo), e é o `web.config` (proxy do IIS) que decide para onde `/api/*` vai. Por isso o **mesmo** `fifa2026-web.zip` serve para qualquer aluno: cada um só troca essa linha.
+
+#### 5.5 Criar site no IIS (porta 80)
 
 1. **IIS Manager** → botão direito em **Sites** → **Add Website**
 2. **Site name:** `FIFA2026-Web` · **Physical path:** `C:\inetpub\wwwroot\fifa2026-web` · **Binding:** http, port `80`
@@ -611,8 +608,8 @@ try {
 | Sintoma | Causa provável | O que fazer |
 |---|---|---|
 | Front abre, mas `/api/*` retorna 502 | ARR proxy não habilitado | IIS Manager → ARR → Server Proxy Settings → ✅ **Enable proxy** |
-| Front abre, mas `/api/*` retorna 404 | URL Rewrite não instalado, ou `web.config` errado | Reinstale URL Rewrite; confira regra `Rewrite` no `dist\web.config` |
-| Backend retorna 500 Internal Server Error | `.env` errado, ou `npm install` faltou | Veja `C:\inetpub\wwwroot\fifa2026-api\iisnode\*.log`; rode `npm install --omit=dev` de novo |
+| Front abre, mas `/api/*` retorna 404 | URL Rewrite não instalado, ou `__BACKEND_URL__` não substituído | Reinstale URL Rewrite; confirme que o `web.config` **não** contém mais `__BACKEND_URL__` (Fase 5.4) |
+| Backend retorna 500 Internal Server Error | `.env` errado, ou `node_modules` não veio no zip | Veja `C:\inetpub\wwwroot\fifa2026-api\iisnode\*.log`; confirme que existe a pasta `node_modules\` — se faltar, rebaixe e reextraia o `fifa2026-api.zip` |
 | Backend não conecta no SQL | TCP/IP do SQL Server desligado, ou firewall Windows bloqueando 1433 | Configuration Manager → habilite TCP/IP → restart serviço; rode o `New-NetFirewallRule` da Fase 3.4 |
 | Backend vê o SQL mas dá "Login failed" | Senha errada no `.env`, ou login `fifa2026_db` não existe | Rode o `CREATE LOGIN` da Fase 3.6; confirme `DB_USER`/`DB_PASSWORD` no `.env` |
 | Browser não abre o IP público | NSG da `vm-front` não tem inbound 80; ou Windows Firewall dentro da VM bloqueando | Portal: NSG da `vm-front` → garanta inbound 80/443 da Internet; RDP na vm-front: `New-NetFirewallRule -DisplayName "HTTP" -Direction Inbound -Protocol TCP -LocalPort 80 -Action Allow` |
@@ -672,7 +669,7 @@ Apaga em bloco: 3 VMs + 3 discos + 3 NICs + 2 NSGs + 1 VNet + 1 Public IP. **Cus
 
 **No arquivo `C:\inetpub\wwwroot\fifa2026-web\web.config` (na `vm-front`):**
 
-A regra `<action type="Rewrite" url="http://<IP_BACK>:3001/api/{R:1}" />` é gerada automaticamente no `npm run build` quando você define `BACKEND_URL=http://<IP_BACK>:3001`. **Não edite à mão.**
+A regra de proxy vem com o placeholder `__BACKEND_URL__`. Você o substitui (Fase 5.4) pelo IP privado da `vm-back`, ficando `<action type="Rewrite" url="http://<IP_BACK>:3001/api/{R:1}" />`. É a **única** edição manual do frontend — todo o resto do site já vem compilado no `fifa2026-web.zip`.
 
 > 🔒 **Regra de ouro:** segredo nunca vai para o código nem para o repositório. Aqui ficam **no arquivo `.env` da `vm-back`** e **na sua memória** (senhas de admin). _Evolução opcional:_ trocar `.env` por **Azure Key Vault** com Managed Identity nas VMs.
 

@@ -47,13 +47,16 @@ Acesse: https://www.iis.net/downloads/microsoft/application-request-routing
 
 ## 📋 PARTE 2: Configuração da Aplicação
 
-### 2.1 Baixar a aplicação
+### 2.1 Baixar a aplicação (já compilada)
 
-Baixe o arquivo ZIP da aplicação:
+Baixe os **dois ZIPs prontos** (backend + frontend) e extraia ambos para `C:\inetpub\wwwroot`:
 
-https://stoposgraduacaotftec.blob.core.windows.net/arquivos-pos/FIFA2026-APP.zip
+- Backend: https://stotfteccopaazure.blob.core.windows.net/copa2026/fifa2026-api.zip
+- Frontend: https://stotfteccopaazure.blob.core.windows.net/copa2026/fifa2026-web.zip
 
-Extraia para: `C:\inetpub\wwwroot`
+Ao extrair os dois, você terá `C:\inetpub\wwwroot\fifa2026-api\` e `C:\inetpub\wwwroot\fifa2026-web\`.
+
+> 💡 **Já vêm prontos:** o `fifa2026-api.zip` inclui a pasta `node_modules/` (você **não** precisa rodar `npm install`) e o `fifa2026-web.zip` já está buildado. Você não compila nada.
 
 O arquivo "FIFA2026Tickets.bacpac" não será usado no servidor de aplicação, somente no servidor de Banco de Dados.
 
@@ -73,6 +76,21 @@ $acl.SetAccessRule($rule2)
 Set-Acl "C:\inetpub\wwwroot\fifa2026-api" $acl
 
 Write-Host "✅ Permissões configuradas!" -ForegroundColor Green
+```
+
+### 2.3 Apontar o frontend para o backend
+
+O `web.config` do frontend vem com o placeholder `__BACKEND_URL__`. Como o backend roda **nesta mesma máquina** (porta 3001), substitua pelo `localhost`. PowerShell **como Administrador**:
+
+```powershell
+cd C:\inetpub\wwwroot\fifa2026-web
+(Get-Content web.config) -replace '__BACKEND_URL__','http://localhost:3001' | Set-Content web.config
+```
+
+Confirme que não sobrou o placeholder:
+
+```powershell
+Select-String -Path web.config -Pattern '__BACKEND_URL__'   # NÃO deve retornar nada
 ```
 
 ---
@@ -249,7 +267,7 @@ Preencha os campos:
 ### Causas comuns:
 
 1. **Arquivo .env não existe ou está errado**
-2. **Dependências não instaladas** (rode `npm install`)
+2. **`node_modules` não veio no zip** — confirme a pasta `C:\inetpub\wwwroot\fifa2026-api\node_modules`; se faltar, rebaixe e reextraia o `fifa2026-api.zip` (não precisa `npm install`)
 3. **Caminho do Node.js errado** no web.config
 
 ## Erro: "404 Not Found" no Frontend
@@ -277,15 +295,11 @@ Preencha os campos:
 
 ## API funciona, mas Frontend não conecta
 
-### Verificar CORS:
+O frontend chama `/api` na mesma origem e o IIS faz o proxy via `web.config` (ARR). Se `/api/*` falhar:
 
-1. No arquivo `.env` do backend, verifique `CORS_ORIGIN`
-2. Para testes, use: `CORS_ORIGIN=*`
-
-### Verificar URL da API no Frontend:
-
-1. Verifique se o IP no `src/lib/api.ts` está correto
-2. Refaça o build e copie novamente
+1. **Placeholder não substituído:** confirme que `C:\inetpub\wwwroot\fifa2026-web\web.config` não contém mais `__BACKEND_URL__` e aponta para `http://localhost:3001` (passo 2.3).
+2. **ARR proxy desabilitado:** IIS Manager → servidor → Application Request Routing Cache → Server Proxy Settings → ✅ Enable proxy (passo 3.1).
+3. Como front e back ficam na mesma origem (proxy reverso), **CORS não é exercitado** — não precisa configurar `CORS_ORIGIN`.
 
 ---
 

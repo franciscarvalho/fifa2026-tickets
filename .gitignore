@@ -42,6 +42,9 @@ web.zip
 *.bacpac-extract/
 **/.bacpac-extract/
 
+# ----- Pacote dos alunos (gerado localmente; publicado no Blob Storage) -----
+_pacote-alunos/
+
 # ----- Editores / OS -----
 .DS_Store
 Thumbs.db
