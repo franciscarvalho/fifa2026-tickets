@@ -506,6 +506,96 @@ union traces, requests, dependencies
 
 ---
 
+## Fase 13 — Validar o fan-out multi-item no Portal (Service Bus + App Insights)
+
+> Esta fase mostra **como provar, no Portal do Azure**, que uma compra de carrinho com **N itens** gera **N mensagens** no Service Bus e **N gravações** no banco — o coração da feature "Oitavas". Faça uma compra real de **2 jogos** no portal (`https://<seu-frontend>` — use o **custom domain**, se houver) e acompanhe.
+
+### 13.1 — A "impressão digital" de uma compra de 2 itens
+
+Uma compra de carrinho com 2 linhas deixa este rastro (exatamente o validado no ambiente de referência em 2026-06-25):
+
+| Camada | O que aparece | Qtde (carrinho de 2) |
+|---|---|---|
+| HTTP (resposta 202) | `{ orderId, correlationIds:[2], correlationId:null }` | 1 orderId, 2 correlationIds |
+| **Service Bus** | mensagens publicadas em `tickets-purchase` | **2 Incoming** |
+| **Service Bus** | mensagens consumidas | **2 Outgoing** |
+| **App Insights** (requests) | `PurchaseEntryFunction` (POST) | 1 |
+| **App Insights** (requests) | `PurchaseConsumerFunction` (trigger Service Bus) | **2** ← o fan-out |
+| **App Insights** (requests) | `PurchaseStatusFunction` (GET, polling) | 2 (1 por correlationId) |
+| **App Insights** (dependencies) | envio p/ `tickets-purchase` (Queue Message) | 2 |
+| **App Insights** (dependencies) | `INSERT`/`SELECT` em `FIFA2026Tickets` (SQL) | 2+ |
+
+### 13.2 — No Portal: **Service Bus**
+
+1. Portal → seu **Service Bus namespace** (`<seu-sb>`) → **Entities → Queues → `tickets-purchase`**.
+2. **Overview** da fila — mostre aos alunos:
+   - **Active message count = 0** após a compra → o **consumidor drenou** a fila (mensagens processadas).
+   - **Dead-letter message count** → mensagens que falharam (ex.: compra inválida) param aqui após **10 tentativas** (Max Delivery Count). Ótimo para demonstrar o caminho de falha.
+3. **Metrics** (Monitoring → Metrics): adicione **Incoming Messages** e **Outgoing Messages** (agregação **Total**), com escopo na fila `tickets-purchase`. Dispare a compra de 2 itens e mostre **+2 em Incoming** e **+2 em Outgoing** → produção e consumo batendo.
+
+> 💡 As mensagens são consumidas em ~1s, então **não ficam paradas** para "peek". O que prova o fan-out é **Incoming/Outgoing = N** (métricas) + os **N PurchaseConsumerFunction** no App Insights (abaixo), não o conteúdo parado na fila.
+
+### 13.3 — No Portal: **Application Insights** (`<seu-appi>`)
+
+- **Application Map** (Investigate → Application Map): topologia automática — Function → **Service Bus (`tickets-purchase`)** → **SQL (`FIFA2026Tickets`)**. Visual perfeito para a aula.
+- **Transaction search** (Investigate → Transaction search): filtre pelo período da compra e veja, em sequência:
+  - 1× `PurchaseEntryFunction` (POST `/api/v2/purchase`)
+  - **2× `PurchaseConsumerFunction`** (trigger Service Bus, `message_bus.destination = tickets-purchase`) ← **o fan-out**
+  - 2× `PurchaseStatusFunction` (GET `/api/v2/purchase/{correlationId}` — o HttpPath traz o correlationId de cada linha)
+  Clique numa transação → **timeline** com as dependências (Service Bus + SQL).
+- **Live Metrics** (Investigate → Live Metrics): abra **antes** de comprar e dispare ao vivo — as Functions "acendem" em tempo real.
+- **Logs (KQL)** (Monitoring → Logs) — queries prontas:
+
+```kusto
+// 1) A "impressão digital": 1 entry → N consumers → N status
+requests
+| where timestamp > ago(30m)
+| where name startswith "Purchase"
+| project timestamp, name, success, http=tostring(customDimensions.HttpPath)
+| order by timestamp asc
+```
+
+```kusto
+// 2) O fan-out: nº de mensagens consumidas = nº de itens do carrinho
+requests
+| where timestamp > ago(30m) and name == "PurchaseConsumerFunction"
+| summarize mensagens_consumidas = count()
+```
+
+```kusto
+// 3) Dependências: envio ao Service Bus + gravação no SQL
+dependencies
+| where timestamp > ago(30m)
+| where target has "tickets-purchase" or target has "FIFA2026Tickets"
+| summarize chamadas = count() by type, target
+```
+
+```kusto
+// 4) Rastro de APLICAÇÃO por pedido (logs do worker com BeginScope):
+//    entry (1 log por linha do carrinho) → consumer (processando + gravado).
+//    Troque <orderId> pelo valor da resposta 202.
+traces
+| where timestamp > ago(30m)
+| where tostring(customDimensions.OrderId) == "<orderId>"
+   or tostring(customDimensions.CorrelationId) in ("<correlationId-1>", "<correlationId-2>")
+| project timestamp, message, oid=tostring(customDimensions.OrderId), cid=tostring(customDimensions.CorrelationId)
+| order by timestamp asc
+```
+
+### 13.4 — Features validadas (✅ ambiente de referência, 2026-06-25)
+
+| Feature | Como foi provado |
+|---|---|
+| **Compra multi-item (fan-out)** | Carrinho de 2 linhas → `orderId` único + 2 `correlationIds` distintos → **2 PurchaseConsumerFunction** + **2 Incoming** + **2 SQL**. |
+| **Cada linha = 1 compra** | 2 status `completed` (PurchaseStatusFunction lê `purchases` por `correlation_id`). |
+| **Backward-compat (1 item)** | Shape legado `{matchId,category,userId,quantity}` → 202 com `correlationId` singular (smoke do workflow). |
+| **Idempotência** | UNIQUE `correlation_id` no banco; reentrega não duplica. |
+| **Caminho de falha** | Compra inválida → **DLQ** após 10 tentativas (visível no Overview da fila). |
+
+> 🛠️ **Gotcha do isolated worker (resolvido):** por padrão, o `.NET isolated` **descarta os logs `Information` do worker** no provider do Application Insights — o `AddApplicationInsightsTelemetryWorkerService()` instala uma regra de filtro que limita o provider a **Warning**. Por isso os `ILogger.LogInformation` com `BeginScope` de `OrderId`/`correlationId` **não apareciam** (só request/dependency do host apareciam). O `host.json` **não** controla isso. O fix está no `Program.cs` — um `.ConfigureLogging(...)` que **remove** essa regra (`ProviderName == "...ApplicationInsightsLoggerProvider"`). Depois disso, a query (4) acima retorna o rastro de aplicação ponta-a-ponta. *(Validado no ambiente de referência em 2026-06-25.)*
+
+---
+
 ## Resumo do que você criou nesta aula
 
 | Camada | Recursos criados (todos no SEU `<seu-rg>`) |
